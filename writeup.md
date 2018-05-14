@@ -39,15 +39,74 @@ You are reading the writeup.
 
 #### 5. Reward Functions: Explain the reward functions that you created.
 
-The reward functions are implemented in `ArmPlugin.cpp`, and consists of the following parts:
-- Reward for collision (in method `onCollisionMsg`). For objective 1 this reward was for any part of the robot arm. For objective 2 this was only for the gripper base.
-- Reward (penalty) for touching the ground (in method `OnUpdate`). Same for both parts.
-- Reward for moving toward object (in method `OnUpdate`). Same for both parts. Positive value if moving toward. Negative if moving away.
-- Reward (penalty) for not moving (in method `OnUpdate`). This was introduced for objective 2 to improve performance.
-
-The scaling of these rewards and penalties were revised between objective 1 and 2, as the images of the results shows. This was done as part of the tuning of reward functions and hyperparameters.
-
 For joint control, the direct position control was chosen and implemented. This was done by giving the DQN agent double number of actions related to directions of freedom (DOF) for the robot arm. And letting two actions affect each joint, one increasing value, and the other decreasing the value.
+
+The reward functions are implemented in `ArmPlugin.cpp`, and consists of the following parts:
+##### Reward for collision
+Implemented in method `onCollisionMsg`. Code looks like this:
+
+```
+bool collisionCheck = (strcmp(contacts->contact(i).collision1().c_str(),
+                                        COLLISION_ITEM) == 0);
+if (collisionCheck)
+{
+        if (strcmp(contacts->contact(i).collision2().c_str(),
+                                        COLLISION_POINT) == 0)
+        {
+                rewardHistory = REWARD_WIN;
+                newReward  = true;
+                endEpisode = true;
+                return;
+        }
+}
+```
+
+For objective 1 the second if-check was not implemented, so any part of the robot touching the object would give the reward.
+
+##### Reward (penalty) for touching the ground.
+Implemented in method `OnUpdate`. Code looks like this:
+
+```
+const float groundContact = 0.05f;
+bool checkGroundContact = (gripBBox.min.z < groundContact);
+if(checkGroundContact)
+{
+        rewardHistory = REWARD_LOSS;
+        newReward     = true;
+        endEpisode    = true;
+}
+```
+
+This code was the same for both objectives. In short, the function checks if the minimum z-value of the gripper (bounding box) if below a threshold. If it is, the episode end with a negative reward.
+
+##### Reward for moving toward object.
+Implemented in method `OnUpdate`. Code looks like this:
+
+```
+float distGoal = BoxDistance(gripBBox, propBBox);
+if( episodeFrames > 1 )
+{
+        const float distDelta  = lastGoalDistance - distGoal;
+        const float alpha = 0.2f;
+        avgGoalDelta  =(avgGoalDelta * alpha) + (distDelta * (1.0f - alpha));
+        rewardHistory = avgGoalDelta;
+
+        // Introduced for objective 2 to improve performance
+        if (abs(avgGoalDelta) < .001f)
+                rewardHistory += (REWARD_LOSS * 0.05f);
+
+        newReward = true;
+}
+```
+
+The function calculates a smoothed delta value between the gripper and the object. If robot arm moves towards the object it will be positively rewarded. And if moving away, it will be negatively rewarded. This function remained the same for both objectives. But the scaling of `REWARD_WIN` and `REWARD_LOSS` was changed to let `avgGoalDelta` have more impact. This was needed to guide the robot arm towards the object faster.
+
+##### Reward (penalty) for not moving.
+Implemented in method `OnUpdate`, and shown in the code snippet above. In short I wanted to penalize the agent for not moving the robot arm. This was introduced for objective 2 to improve performance.
+
+##### Scaling
+The scaling of these rewards and penalties were revised between objective 1 and 2, as the images of the results shows. This was done as part of the tuning of reward functions and hyperparameters. For objective 1 I chose to use `REWARD_WIN = 500,0` and `REWARD_LOSS = -500.0` in my implementation. This worked OK, and gave me the result shown in the first image. However when the rewuirements for objective 2 was to only let the gripper base touch the object, that scaling did not seem to guide the robot arm properly towards the object. I decided to change the scaling to `REWARD_WIN = 10.0` and `REWARD_LOSS = -10.0`, which gave much better results.
+
 
 #### 6. Hyperparameters: Specify the hyperparameters that you selected for each objective, and explain the reasoning behind the selection.
 Image dimensions was set to the same as the size of the input (64x64), since upscaling the input images would not gain any more information to the DQN agent (`INPUT_WIDTH` and `INPUT_HEIGHT`).
